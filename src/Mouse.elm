@@ -21,7 +21,7 @@ for a couple tricky scenarios including:
 
 import Dict
 import Dom.LowLevel as Dom
-import Json.Decode as Json exposing ((:=))
+import Json.Decode as Json
 import Process
 import Task exposing (Task)
 
@@ -44,7 +44,9 @@ type alias Position =
 -}
 position : Json.Decoder Position
 position =
-  Json.object2 Position ("pageX" := Json.int) ("pageY" := Json.int)
+  Json.map2 Position
+    (Json.field "pageX" Json.int)
+    (Json.field "pageY" Json.int)
 
 
 
@@ -157,7 +159,8 @@ type alias Msg =
   }
 
 
-(&>) t1 t2 = t1 `Task.andThen` \_ -> t2
+(&>) t1 t2 =
+  Task.andThen (\_ -> t2) t1
 
 
 onEffects : Platform.Router msg Msg -> List (MySub msg) -> State msg -> Task Never (State msg)
@@ -168,20 +171,16 @@ onEffects router newSubs oldState =
 
     bothStep category {pid} taggers task =
       task
-        `Task.andThen` \state ->
-
-      Task.succeed
-        (Dict.insert category (Watcher taggers pid) state)
+        |> Task.andThen (\state -> Task.succeed (Dict.insert category (Watcher taggers pid) state))
 
     rightStep category taggers task =
-      task
-        `Task.andThen` \state ->
-
-      Process.spawn (Dom.onDocument category position (Platform.sendToSelf router << Msg category))
-        `Task.andThen` \pid ->
-
-      Task.succeed
-        (Dict.insert category (Watcher taggers pid) state)
+      let
+        tracker =
+          Dom.onDocument category position (Platform.sendToSelf router << Msg category)
+      in
+        task
+          |> Task.andThen (\state -> Process.spawn tracker
+          |> Task.andThen (\pid -> Task.succeed (Dict.insert category (Watcher taggers pid) state)))
   in
     Dict.merge
       leftStep
@@ -204,7 +203,5 @@ onSelfMsg router {category,position} state =
           Platform.sendToApp router (tagger position)
       in
         Task.sequence (List.map send taggers)
-          `Task.andThen` \_ ->
-
-        Task.succeed state
+          &> Task.succeed state
 
